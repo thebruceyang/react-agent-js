@@ -1,89 +1,98 @@
-import { StateGraph, START, END } from '@langchain/langgraph';
-import { ChatOpenAI } from "@langchain/openai";
-import { ChatAnthropic } from "@langchain/anthropic";
+import { StateGraph } from "@langchain/langgraph";
+import { RunnableConfig } from "@langchain/core/runnables";
+import { WriterAgent } from "../agents/writerAgent.js";
+import { ReviewerAgent } from "../agents/reviewerAgent.js";
+import { HumanAgent } from "../agents/humanAgent.js";
+import { NodeInterrupt } from "@langchain/langgraph/errors.js";
+import { AgentState, StateSchema, InputSchema, InitializedGraph } from "../types";
 
-import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
-import { writerSystemPrompt, writerHumanPrompt, reviewerSystemPrompt, reviewerHumanPrompt } from './prompts.js';
-import type { WriterReviewerState } from './types.js';
-
-const model = new ChatAnthropic({
-  modelName: 'claude-3-5-sonnet-20241022',
-  temperature: 0.7,
+// Initialize agents
+const writerAgent = new WriterAgent({
+  goals: [],  // Will be populated from input
+  instructions: []
 });
 
-// Writer Agent Node
-const writerAgent = async (state: WriterReviewerState) => {
-  const messages = await writerSystemPrompt.format({
-    goals: state.goals.join('\n'),
-    instructions: state.instructions.join('\n'),
-  });
+const reviewerAgent = new ReviewerAgent({
+  goals: [],
+  instructions: []
+});
 
-  const context = await writerHumanPrompt.format({
-    previous_document: state.currentDocument || 'No previous document',
-    feedback_to_incorporate: state.feedbackHistory.length > 0 
-      ? state.feedbackHistory[state.feedbackHistory.length - 1].accepted 
-        ? state.feedbackHistory[state.feedbackHistory.length - 1].feedback
-        : state.feedbackHistory[state.feedbackHistory.length - 1].edited
-      : 'Write the initial document.',
-  });
+const humanAgent = new HumanAgent();
 
-  const response = await model.call([messages, new HumanMessage(context)]);
+// Node functions
+async function write(state: AgentState, config?: RunnableConfig) {
+  return await writerAgent.write(state);
+}
 
-  return {
-    ...state,
-    currentDocument: response.content,
-    nextAgent: 'reviewer' as const,
-  };
-};
+async function review(state: AgentState, config?: RunnableConfig) {
+  return await reviewerAgent.review(state);
+}
 
-// Reviewer Agent Node
-const reviewerAgent = async (state: WriterReviewerState) => {
-  const messages = await reviewerSystemPrompt.format({
-    goals: state.goals.join('\n'),
-    instructions: state.instructions.join('\n'),
-  });
+async function humanReview(state: AgentState, config?: RunnableConfig) {
+  return await humanAgent.reviewFeedback(state);
+}
 
-  const context = await reviewerHumanPrompt.format({
-    document: state.currentDocument,
-  });
+async function checkContinue(state: AgentState, config?: RunnableConfig) {
+  return await humanAgent.shouldContinue(state);
+}
 
-  const response = await model.call([messages, new HumanMessage(context)]);
+// Create the graph
+const builder = new StateGraph({
+  channels: {
+    state: StateSchema,
+    input: InputSchema,
+  }
+});
 
-  return {
-    ...state,
-    feedbackHistory: [...state.feedbackHistory, { feedback: response.content, accepted: false }],
-    nextAgent: 'human' as const,
-  };
-};
-
-// Create and configure the graph
-export function createWriterReviewerGraph() {
-  const graph = new StateGraph<WriterReviewerState>({
-    initialState: {
-      goals: [],
-      instructions: [],
-      currentDocument: '',
-      feedbackHistory: [],
-      messages: [],
-      nextAgent: 'writer',
-      iteration: 0,
-    }
-  });
-
-  // Add nodes
-  graph.addNode('writer', writerAgent);
-  graph.addNode('reviewer', reviewerAgent);
-  graph.addNode('human', humanReviewNode);
-
-  // Add edges
-  graph.addEdge(START, 'writer');
-  graph.addEdge('writer', 'reviewer');
-  graph.addEdge('reviewer', 'human');
-  graph.addEdge('human', 'writer');
-  graph.addConditionalEdges(
-    'human',
-    (state) => state.nextAgent === 'end' ? END : 'writer'
+// Add nodes
+builder
+  .addNode("write", write)
+  .addNode("review", review)
+  .addNode("human_review", humanReview)
+  .addNode("check_continue", checkContinue)
+  .addEdge("__start__", "write")
+  .addEdge("write", "review")
+  .addEdge("review", "human_review")
+  .addEdge("human_review", "check_continue")
+  .addConditionalEdges(
+    "check_continue",
+    (state) => state.context.status === "complete" ? "end" : "write"
   );
 
-  return graph.compile();
+// Compile the graph
+export const graph = builder.compile({
+  interruptBefore: ["human_review", "check_continue"],
+});
+
+// Set graph name for better identification
+graph.name = "Document Writing Collaboration Graph";
+
+// Initialize the graph with configuration
+export async function initializeGraph(goals: string[], instructions: string[]): Promise<InitializedGraph> {
+  // Set initial state
+  const initialState = {
+    messages: [],
+    context: {
+      goals,
+      instructions,
+      currentDocument: "",
+      status: "writing",
+      feedback: []
+    }
+  };
+
+  // Configure agents
+  writerAgent.goals = goals;
+  writerAgent.instructions = instructions;
+  reviewerAgent.goals = goals;
+  reviewerAgent.instructions = instructions;
+
+  return {
+    graph,
+    initialState,
+    config: {
+      goals,
+      instructions
+    }
+  };
 }

@@ -1,6 +1,7 @@
 import { BaseMessage } from "@langchain/core/messages";
 
-export interface WriterReviewerState {
+// Define proper state interface with TypeScript types
+interface WriterReviewerState {
   goals: string[];
   instructions: string[];
   currentDocument: string;
@@ -8,8 +9,10 @@ export interface WriterReviewerState {
     feedback: string;
     accepted: boolean;
     edited?: string;
+    timestamp: string; // Add timestamp for proper history tracking
   }>;
-  messages: BaseMessage[];
+  messages: Array<HumanMessage | AIMessage | SystemMessage>;
   nextAgent: 'writer' | 'reviewer' | 'human' | 'end';
   iteration: number;
+  error?: string; // Add error field for error handling
 }
