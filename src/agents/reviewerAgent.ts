@@ -4,9 +4,9 @@ import { AgentState, Feedback, ReviewerAgentConfig } from "../types.js";
 import { v4 as uuidv4 } from "uuid";
 
 export class ReviewerAgent {
-  private model: ChatOpenAI;
-  private goals: string[];
-  private instructions: string[];
+  public model: ChatOpenAI;
+  public goals: string[];
+  public instructions: string[];
 
   constructor(config: ReviewerAgentConfig) {
     this.model = new ChatOpenAI({

@@ -4,9 +4,9 @@ import { StateGraph } from "@langchain/langgraph";
 import { AgentState, Feedback, WriterAgentConfig } from "../types.js";
 
 export class WriterAgent {
-  private model: ChatOpenAI;
-  private goals: string[];
-  private instructions: string[];
+  public model: ChatOpenAI;
+  public goals: string[];
+  public instructions: string[];
 
   constructor(config: WriterAgentConfig) {
     this.model = new ChatOpenAI({
