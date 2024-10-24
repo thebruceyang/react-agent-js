@@ -1,4 +1,4 @@
-import { NodeInterrupt } from "@langchain/langgraph/errors.js";
+import { NodeInterrupt } from "@langchain/langgraph";
 
 export class HumanAgent {
   async reviewFeedback(state: AgentState): Promise<AgentState> {

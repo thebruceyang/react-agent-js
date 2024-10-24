@@ -1,6 +1,7 @@
-import { ChatOpenAI } from "langchain/chat_models";
-import { HumanMessage, SystemMessage } from "langchain/schema";
-import { AgentState, Feedback, WriterAgentConfig } from "./types";
+import { ChatOpenAI } from "@langchain/openai";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { StateGraph } from "@langchain/langgraph";
+import { AgentState, Feedback, WriterAgentConfig } from "../types.js";
 
 export class WriterAgent {
   private model: ChatOpenAI;

@@ -1,6 +1,6 @@
-import { ChatOpenAI } from "langchain/chat_models";
-import { HumanMessage, SystemMessage } from "langchain/schema";
-import { AgentState, Feedback } from "./types";
+import { ChatOpenAI } from "@langchain/openai";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AgentState, Feedback, ReviewerAgentConfig } from "../types.js";
 import { v4 as uuidv4 } from "uuid";
 
 export class ReviewerAgent {
