@@ -1,10 +1,10 @@
 import { StateGraph } from "@langchain/langgraph";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { WriterAgent } from "../agents/writerAgent.js";
-import { ReviewerAgent } from "../agents/reviewerAgent.js";
-import { HumanAgent } from "../agents/humanAgent.js";
+import { WriterAgent } from "./agents/writerAgent.js";
+import { ReviewerAgent } from "./agents/reviewerAgent.js";
+import { HumanAgent } from "./agents/humanAgent.js";
 import { NodeInterrupt } from "@langchain/langgraph/errors.js";
-import { AgentState, StateSchema, InputSchema, InitializedGraph } from "../types";
+import { AgentState, StateSchema, InputSchema, InitializedGraph } from "./types.js";
 
 // Initialize agents
 const writerAgent = new WriterAgent({

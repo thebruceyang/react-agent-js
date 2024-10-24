@@ -37,7 +37,7 @@ export interface GraphConfig {
 }
 
 export interface InitializedGraph {
-  graph: StateGraph;
+  graph: StateGraph<AgentState>;
   initialState: AgentState;
   config: GraphConfig;
 }
