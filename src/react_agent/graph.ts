@@ -1,75 +1,89 @@
-import { AIMessage } from "@langchain/core/messages";
-import { RunnableConfig } from "@langchain/core/runnables";
-import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { StateGraph, START, END } from '@langchain/langgraph';
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
 
-import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
-import { TOOLS } from "./tools.js";
-import { loadChatModel } from "./utils.js";
+import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
+import { writerSystemPrompt, writerHumanPrompt, reviewerSystemPrompt, reviewerHumanPrompt } from './prompts.js';
+import type { WriterReviewerState } from './types.js';
 
-// Define the function that calls the model
-async function callModel(
-  state: typeof MessagesAnnotation.State,
-  config: RunnableConfig,
-): Promise<typeof MessagesAnnotation.Update> {
-  /** Call the LLM powering our agent. **/
-  const configuration = ensureConfiguration(config);
-
-  // Feel free to customize the prompt, model, and other logic!
-  const model = (await loadChatModel(configuration.model)).bindTools(TOOLS);
-
-  const response = await model.invoke([
-    {
-      role: "system",
-      content: configuration.systemPromptTemplate.replace(
-        "{system_time}",
-        new Date().toISOString(),
-      ),
-    },
-    ...state.messages,
-  ]);
-
-  // We return a list, because this will get added to the existing list
-  return { messages: [response] };
-}
-
-// Define the function that determines whether to continue or not
-function routeModelOutput(state: typeof MessagesAnnotation.State): string {
-  const messages = state.messages;
-  const lastMessage = messages[messages.length - 1];
-  // If the LLM is invoking tools, route there.
-  if ((lastMessage as AIMessage)?.tool_calls?.length || 0 > 0) {
-    return "tools";
-  }
-  // Otherwise end the graph.
-  else {
-    return "__end__";
-  }
-}
-
-// Define a new graph. We use the prebuilt MessagesAnnotation to define state:
-// https://langchain-ai.github.io/langgraphjs/concepts/low_level/#messagesannotation
-const workflow = new StateGraph(MessagesAnnotation, ConfigurationSchema)
-  // Define the two nodes we will cycle between
-  .addNode("callModel", callModel)
-  .addNode("tools", new ToolNode(TOOLS))
-  // Set the entrypoint as `callModel`
-  // This means that this node is the first one called
-  .addEdge("__start__", "callModel")
-  .addConditionalEdges(
-    // First, we define the edges' source node. We use `callModel`.
-    // This means these are the edges taken after the `callModel` node is called.
-    "callModel",
-    // Next, we pass in the function that will determine the sink node(s), which
-    // will be called after the source node is called.
-    routeModelOutput,
-  )
-  // This means that after `tools` is called, `callModel` node is called next.
-  .addEdge("tools", "callModel");
-
-// Finally, we compile it!
-// This compiles it into a graph you can invoke and deploy.
-export const graph = workflow.compile({
-  interruptBefore: [], // if you want to update the state before calling the tools
-  interruptAfter: [],
+const model = new ChatAnthropic({
+  modelName: 'claude-3-5-sonnet-20241022',
+  temperature: 0.7,
 });
+
+// Writer Agent Node
+const writerAgent = async (state: WriterReviewerState) => {
+  const messages = await writerSystemPrompt.format({
+    goals: state.goals.join('\n'),
+    instructions: state.instructions.join('\n'),
+  });
+
+  const context = await writerHumanPrompt.format({
+    previous_document: state.currentDocument || 'No previous document',
+    feedback_to_incorporate: state.feedbackHistory.length > 0 
+      ? state.feedbackHistory[state.feedbackHistory.length - 1].accepted 
+        ? state.feedbackHistory[state.feedbackHistory.length - 1].feedback
+        : state.feedbackHistory[state.feedbackHistory.length - 1].edited
+      : 'Write the initial document.',
+  });
+
+  const response = await model.call([messages, new HumanMessage(context)]);
+
+  return {
+    ...state,
+    currentDocument: response.content,
+    nextAgent: 'reviewer' as const,
+  };
+};
+
+// Reviewer Agent Node
+const reviewerAgent = async (state: WriterReviewerState) => {
+  const messages = await reviewerSystemPrompt.format({
+    goals: state.goals.join('\n'),
+    instructions: state.instructions.join('\n'),
+  });
+
+  const context = await reviewerHumanPrompt.format({
+    document: state.currentDocument,
+  });
+
+  const response = await model.call([messages, new HumanMessage(context)]);
+
+  return {
+    ...state,
+    feedbackHistory: [...state.feedbackHistory, { feedback: response.content, accepted: false }],
+    nextAgent: 'human' as const,
+  };
+};
+
+// Create and configure the graph
+export function createWriterReviewerGraph() {
+  const graph = new StateGraph<WriterReviewerState>({
+    initialState: {
+      goals: [],
+      instructions: [],
+      currentDocument: '',
+      feedbackHistory: [],
+      messages: [],
+      nextAgent: 'writer',
+      iteration: 0,
+    }
+  });
+
+  // Add nodes
+  graph.addNode('writer', writerAgent);
+  graph.addNode('reviewer', reviewerAgent);
+  graph.addNode('human', humanReviewNode);
+
+  // Add edges
+  graph.addEdge(START, 'writer');
+  graph.addEdge('writer', 'reviewer');
+  graph.addEdge('reviewer', 'human');
+  graph.addEdge('human', 'writer');
+  graph.addConditionalEdges(
+    'human',
+    (state) => state.nextAgent === 'end' ? END : 'writer'
+  );
+
+  return graph.compile();
+}
